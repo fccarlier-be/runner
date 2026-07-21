@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Runner Shooter Proto</title>
+    <title>Runner Shooter Proto - V2</title>
     <style>
         body {
             margin: 0;
             padding: 0;
-            background: #1a1a1a;
+            background: #111;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -18,8 +18,7 @@
         }
         canvas {
             border: 2px solid #333;
-            background: #222;
-            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            background: #1e1e24;
             touch-action: none;
         }
     </style>
@@ -32,40 +31,64 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// Adaptation à la taille de l'écran mobile
 const width = Math.min(window.innerWidth, 430);
 const height = Math.min(window.innerHeight, 932);
 canvas.width = width;
 canvas.height = height;
 
-// --- ÉTATS DU JEU ---
-let player = { x: width / 2, y: height - 80, radius: 15, speed: 5 };
+// --- ÉTAT DU JEU ---
+let scrollSpeed = 2; // Vitesse d'avancée du décor
+let playerCount = 1; // Nombre d'unités actuelles
+let playerPos = { x: width / 2, y: height - 120 };
+
 let bullets = [];
-let obstacles = [];
-let gates = [];
+let elements = []; // Contient portes, obstacles et ennemis
 let lastShootTime = 0;
-let shootInterval = 150; // Vitesse de tir (ms)
+let shootInterval = 200; // Cadence de tir
 
-// Création d'un bloc obstacle d'exemple (comme le bloc de bois de la pub)
-obstacles.push({
-    x: width / 2 - 60,
-    y: 150,
-    w: 120,
-    h: 100,
-    hp: 100 // Points de vie du bloc
-});
+// --- GENERATION DES VAGUES (Double Voie) ---
+function spawnWave(yPos) {
+    const laneWidth = width / 2;
 
-// Création d'une porte multiplicatrice (+5 balles / unités)
-gates.push({
-    x: 50,
-    y: 320,
-    w: width - 100,
-    h: 40,
-    value: 5,
-    type: 'add' // 'add' ou 'multiply'
-});
+    // Voie de GAUCHE : Une grosse porte bonus
+    elements.push({
+        type: 'gate',
+        x: 10,
+        y: yPos,
+        w: laneWidth - 20,
+        h: 40,
+        value: 10,
+        label: '+10 Unités'
+    });
 
-// --- CONTRÔLES (Souri / Touch) ---
+    // Voie de DROITE : Un obstacle lourd + des ennemis
+    elements.push({
+        type: 'obstacle',
+        x: laneWidth + 10,
+        y: yPos,
+        w: laneWidth - 20,
+        h: 60,
+        hp: 40
+    });
+
+    // Un groupe d'ennemis juste derrière l'obstacle sur la voie de droite
+    for (let i = 0; i < 8; i++) {
+        elements.push({
+            type: 'enemy',
+            x: laneWidth + 20 + (i % 4) * 35,
+            y: yPos - 80 - Math.floor(i / 4) * 35,
+            radius: 12,
+            hp: 1
+        });
+    }
+}
+
+// Génération de quelques vagues initiales espacées
+spawnWave(-100);
+spawnWave(-600);
+spawnWave(-1100);
+
+// --- CONTRÔLES TACTILES / SOURIS ---
 let isDragging = false;
 let startX = 0;
 
@@ -78,10 +101,10 @@ const handleMove = (e) => {
     if (!isDragging) return;
     const currentX = e.touches ? e.touches[0].clientX : e.clientX;
     const deltaX = currentX - startX;
-    player.x += deltaX;
+    playerPos.x += deltaX;
     
-    // Limites de l'écran
-    player.x = Math.max(player.radius, Math.min(width - player.radius, player.x));
+    // Garder le joueur dans l'écran
+    playerPos.x = Math.max(30, Math.min(width - 30, playerPos.x));
     startX = currentX;
 };
 
@@ -90,16 +113,22 @@ const handleEnd = () => isDragging = false;
 canvas.addEventListener('mousedown', handleStart);
 canvas.addEventListener('mousemove', handleMove);
 window.addEventListener('mouseup', handleEnd);
-
 canvas.addEventListener('touchstart', handleStart);
 canvas.addEventListener('touchmove', handleMove);
 canvas.addEventListener('touchend', handleEnd);
 
-// --- BOUCLE DE JEU ---
+// --- BOUCLE PRINCIPALE ---
 function update(timestamp) {
-    // 1. Tir automatique
-    if (timestamp - lastShootTime > shootInterval) {
-        bullets.push({ x: player.x, y: player.y - player.radius, radius: 4, dy: 8 });
+    if (playerCount <= 0) {
+        alert("Game Over !");
+        document.location.reload();
+        return;
+    }
+
+    // 1. Tir automatique selon le nombre d'unités
+    if (timestamp - lastShootTime > Math.max(50, shootInterval - playerCount * 5)) {
+        // Chaque unité tire une balle légère
+        bullets.push({ x: playerPos.x, y: playerPos.y - 20, dy: 9 });
         lastShootTime = timestamp;
     }
 
@@ -108,69 +137,125 @@ function update(timestamp) {
         let b = bullets[i];
         b.y -= b.dy;
 
-        // Collision avec les blocs obstacles
-        for (let j = obstacles.length - 1; j >= 0; j--) {
-            let obs = obstacles[j];
-            if (b.x > obs.x && b.x < obs.x + obs.w && b.y > obs.y && b.y < obs.y + obs.h) {
-                obs.hp--;
-                bullets.splice(i, 1); // Détruire la balle
-                if (obs.hp <= 0) obstacles.splice(j, 1); // Détruire le bloc si HP = 0
+        // Collision balles vs éléments
+        for (let j = elements.length - 1; j >= 0; j--) {
+            let el = elements[j];
+            
+            // Collision avec obstacle ou ennemi
+            if (el.type === 'obstacle' && b.x > el.x && b.x < el.x + el.w && b.y > el.y && b.y < el.y + el.h) {
+                el.hp--;
+                bullets.splice(i, 1);
+                if (el.hp <= 0) elements.splice(j, 1);
                 break;
+            } else if (el.type === 'enemy') {
+                let dist = Math.hypot(b.x - el.x, b.y - el.y);
+                if (dist < el.radius + 4) {
+                    elements.splice(j, 1); // L'ennemi meurt
+                    bullets.splice(i, 1); // La balle disparaît
+                    break;
+                }
             }
         }
 
-        // Nettoyage des balles hors écran
         if (b && b.y < 0) bullets.splice(i, 1);
+    }
+
+    // 3. Déplacement des éléments du décor vers le bas
+    for (let i = elements.length - 1; i >= 0; i--) {
+        let el = elements[i];
+        el.y += scrollSpeed;
+
+        // Collision JOUEUR vs PORTE
+        if (el.type === 'gate' && playerPos.y < el.y + el.h && playerPos.y > el.y) {
+            if (Math.abs(playerPos.x - (el.x + el.w / 2)) < el.w / 2) {
+                playerCount += el.value; // Gain d'unités !
+                elements.splice(i, 1); // La porte est consommée
+                continue;
+            }
+        }
+
+        // Collision JOUEUR vs ENNEMI (Combat rapproché)
+        if (el.type === 'enemy') {
+            let dist = Math.hypot(playerPos.x - el.x, playerPos.y - el.y);
+            if (dist < el.radius + 20) {
+                playerCount--; // Perte d'une unité
+                elements.splice(i, 1); // L'ennemi s'autodétruit
+                continue;
+            }
+        }
+
+        // Nettoyage si sorti de l'écran par le bas
+        if (el.y > height + 100) elements.splice(i, 1);
     }
 
     draw();
     requestAnimationFrame(update);
 }
 
-// --- RENDU GRAPHIQUE ---
+// --- RENDU ---
 function draw() {
     ctx.clearRect(0, 0, width, height);
 
-    // Dessiner le Joueur (Bleu)
+    // Ligne centrale de séparation des 2 voies
+    ctx.strokeStyle = '#333';
+    ctx.setLineDash([10, 10]);
     ctx.beginPath();
-    ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
-    ctx.fillStyle = '#007AFF';
-    ctx.fill();
-    ctx.closePath();
+    ctx.moveTo(width / 2, 0);
+    ctx.lineTo(width / 2, height);
+    ctx.stroke();
+    ctx.setLineDash([]);
 
-    // Dessiner les Projectiles
+    // Dessin des Éléments (Portes, Obstacles, Ennemis)
+    elements.forEach(el => {
+        if (el.type === 'gate') {
+            ctx.fillStyle = 'rgba(0, 230, 118, 0.3)';
+            ctx.fillRect(el.x, el.y, el.w, el.h);
+            ctx.strokeStyle = '#00E676';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(el.x, el.y, el.w, el.h);
+
+            ctx.fillStyle = '#FFF';
+            ctx.font = 'bold 18px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(el.label, el.x + el.w / 2, el.y + 26);
+        } 
+        else if (el.type === 'obstacle') {
+            ctx.fillStyle = '#D32F2F';
+            ctx.fillRect(el.x, el.y, el.w, el.h);
+
+            ctx.fillStyle = '#FFF';
+            ctx.font = 'bold 20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(el.hp, el.x + el.w / 2, el.y + el.h / 2 + 7);
+        }
+        else if (el.type === 'enemy') {
+            ctx.beginPath();
+            ctx.arc(el.x, el.y, el.radius, 0, Math.PI * 2);
+            ctx.fillStyle = '#FF1744';
+            ctx.fill();
+            ctx.closePath();
+        }
+    });
+
+    // Dessin des Balles
     ctx.fillStyle = '#00E5FF';
     bullets.forEach(b => {
         ctx.beginPath();
-        ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+        ctx.arc(b.x, b.y, 3, 0, Math.PI * 2);
         ctx.fill();
-        ctx.closePath();
     });
 
-    // Dessiner les Portes Multiplicatrices
-    gates.forEach(g => {
-        ctx.fillStyle = 'rgba(0, 200, 83, 0.4)';
-        ctx.fillRect(g.x, g.y, g.w, g.h);
-        ctx.strokeStyle = '#00C853';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(g.x, g.y, g.w, g.h);
+    // Dessin du Joueur (Représenté par son groupe d'unités)
+    ctx.fillStyle = '#29B6F6';
+    ctx.beginPath();
+    ctx.arc(playerPos.x, playerPos.y, 18, 0, Math.PI * 2);
+    ctx.fill();
 
-        ctx.fillStyle = '#FFF';
-        ctx.font = 'bold 20px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(`+${g.value} Tirs`, g.x + g.w / 2, g.y + 26);
-    });
-
-    // Dessiner les Blocs Obstacles
-    obstacles.forEach(obs => {
-        ctx.fillStyle = '#D84315';
-        ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
-
-        ctx.fillStyle = '#FFF';
-        ctx.font = 'bold 24px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(obs.hp, obs.x + obs.w / 2, obs.y + obs.h / 2 + 8);
-    });
+    // Compteur au-dessus du joueur
+    ctx.fillStyle = '#FFF';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`×${playerCount}`, playerPos.x, playerPos.y - 25);
 }
 
 requestAnimationFrame(update);
