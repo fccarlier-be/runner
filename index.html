@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Runner Shooter Proto - V2</title>
+    <title>Runner Shooter Proto - V3</title>
     <style>
         body {
             margin: 0;
@@ -15,21 +15,34 @@
             height: 100vh;
             overflow: hidden;
             font-family: sans-serif;
+            color: #fff;
         }
         canvas {
             border: 2px solid #333;
-            background: #1e1e24;
+            background: #1a1a1f;
             touch-action: none;
+        }
+        #gameStatus {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 18px;
+            pointer-events: none;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
         }
     </style>
 </head>
 <body>
 
+<div id="gameStatus">Unités: <span id="unitCount">1</span> | Niveau: <span id="levelCount">1</span></div>
 <canvas id="gameCanvas"></canvas>
 
 <script>
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
+const unitCountEl = document.getElementById('unitCount');
+const levelCountEl = document.getElementById('levelCount');
 
 const width = Math.min(window.innerWidth, 430);
 const height = Math.min(window.innerHeight, 932);
@@ -37,56 +50,84 @@ canvas.width = width;
 canvas.height = height;
 
 // --- ÉTAT DU JEU ---
-let scrollSpeed = 2; // Vitesse d'avancée du décor
+let scrollSpeed = 2.5; // Vitesse d'avancée du décor
 let playerCount = 1; // Nombre d'unités actuelles
 let playerPos = { x: width / 2, y: height - 120 };
+let gameOver = false;
+let currentLevel = 1;
 
 let bullets = [];
-let elements = []; // Contient portes, obstacles et ennemis
+let elements = []; // Contient portes, obstacles, ennemis et super-bonus
 let lastShootTime = 0;
-let shootInterval = 200; // Cadence de tir
+let shootInterval = 200; // Cadence de tir de base
 
-// --- GENERATION DES VAGUES (Double Voie) ---
-function spawnWave(yPos) {
+// État du super-bonus (Gatling)
+let superBonusActive = false;
+let superBonusTimer = 0;
+const SUPER_BONUS_DURATION = 10000; // 10 secondes
+
+// --- GENERATION DES VAGUES (Double Voie Spécifique) ---
+function spawnWave(yPos, level) {
     const laneWidth = width / 2;
 
-    // Voie de GAUCHE : Une grosse porte bonus
-    elements.push({
-        type: 'gate',
-        x: 10,
-        y: yPos,
-        w: laneWidth - 20,
-        h: 40,
-        value: 10,
-        label: '+10 Unités'
-    });
-
-    // Voie de DROITE : Un obstacle lourd + des ennemis
-    elements.push({
-        type: 'obstacle',
-        x: laneWidth + 10,
-        y: yPos,
-        w: laneWidth - 20,
-        h: 60,
-        hp: 40
-    });
-
-    // Un groupe d'ennemis juste derrière l'obstacle sur la voie de droite
-    for (let i = 0; i < 8; i++) {
+    // --- Voie de GAUCHE : Dédiée au Super Bonus ---
+    // On place l'item "Super Bonus" qui débloque la gatling
+    if (Math.random() < 0.4) { // 40% de chance d'apparaître
         elements.push({
-            type: 'enemy',
-            x: laneWidth + 20 + (i % 4) * 35,
-            y: yPos - 80 - Math.floor(i / 4) * 35,
-            radius: 12,
-            hp: 1
+            type: 'superBonus',
+            x: laneWidth / 2, // Centré sur la voie de gauche
+            y: yPos,
+            radius: 20,
+            color: '#FFD700' // Doré
         });
+    }
+
+    // --- Voie de DROITE : Bonus Classiques, Obstacles et Horde ---
+    // 1. Une porte bonus ou malus
+    if (Math.random() < 0.7) {
+        elements.push({
+            type: 'gate',
+            x: laneWidth + 10,
+            y: yPos + 100,
+            w: laneWidth - 20,
+            h: 40,
+            value: Math.floor(Math.random() * 10) + 1,
+            type: Math.random() < 0.8 ? 'add' : 'sub', // 80% chance bonus, 20% malus
+        });
+    }
+
+    // 2. Un obstacle lourd
+    if (Math.random() < 0.6) {
+        elements.push({
+            type: 'obstacle',
+            x: laneWidth + 30,
+            y: yPos + 250,
+            w: laneWidth - 60,
+            h: 60,
+            hp: 20 + level * 5 // HP augmentent avec le niveau
+        });
+    }
+
+    // 3. Une HORDE beaucoup plus conséquente
+    const enemyRows = 10 + level * 2; // De plus en plus de rangées
+    const enemyCols = 6;
+    for (let i = 0; i < enemyRows; i++) {
+        for (let j = 0; j < enemyCols; j++) {
+            elements.push({
+                type: 'enemy',
+                x: laneWidth + 25 + j * 30,
+                y: yPos + 400 + i * 30,
+                radius: 10,
+                hp: 1
+            });
+        }
     }
 }
 
-// Génération de quelques vagues initiales espacées
-spawnWave(-100);
-spawnWave(-600);
-spawnWave(-1100);
+// Génération de vagues espacées
+for (let i = 0; i < 5; i++) {
+    spawnWave(-100 - i * 800, currentLevel);
+}
 
 // --- CONTRÔLES TACTILES / SOURIS ---
 let isDragging = false;
@@ -98,7 +139,7 @@ const handleStart = (e) => {
 };
 
 const handleMove = (e) => {
-    if (!isDragging) return;
+    if (!isDragging || gameOver) return;
     const currentX = e.touches ? e.touches[0].clientX : e.clientX;
     const deltaX = currentX - startX;
     playerPos.x += deltaX;
@@ -119,16 +160,57 @@ canvas.addEventListener('touchend', handleEnd);
 
 // --- BOUCLE PRINCIPALE ---
 function update(timestamp) {
-    if (playerCount <= 0) {
-        alert("Game Over !");
-        document.location.reload();
+    if (gameOver) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, width, height);
+        ctx.fillStyle = '#FFF';
+        ctx.font = 'bold 36px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText("GAME OVER", width / 2, height / 2);
+        ctx.font = '24px sans-serif';
+        ctx.fillText("Tapez pour recommencer", width / 2, height / 2 + 40);
         return;
     }
 
-    // 1. Tir automatique selon le nombre d'unités
-    if (timestamp - lastShootTime > Math.max(50, shootInterval - playerCount * 5)) {
-        // Chaque unité tire une balle légère
-        bullets.push({ x: playerPos.x, y: playerPos.y - 20, dy: 9 });
+    if (playerCount <= 0) {
+        gameOver = true;
+        return;
+    }
+
+    // Mise à jour de l'UI
+    unitCountEl.textContent = playerCount;
+    levelCountEl.textContent = currentLevel;
+
+    // Gestion du super bonus
+    if (superBonusActive) {
+        superBonusTimer -= 16.67; // On suppose 60fps (1000ms / 60)
+        if (superBonusTimer <= 0) {
+            superBonusActive = false;
+            shootInterval = 200; // Cadence normale
+        } else {
+            shootInterval = 50; // Cadence Gatling déchaînée
+        }
+    }
+
+    // 1. Tir automatique
+    if (timestamp - lastShootTime > shootInterval) {
+        if (superBonusActive) {
+            // Mode Gatling : Tir en éventail dévastateur
+            bullets.push({ x: playerPos.x - 10, y: playerPos.y - 20, dy: 15, damage: 2, color: '#FFD700' });
+            bullets.push({ x: playerPos.x, y: playerPos.y - 30, dy: 16, damage: 3, color: '#FFD700' });
+            bullets.push({ x: playerPos.x + 10, y: playerPos.y - 20, dy: 15, damage: 2, color: '#FFD700' });
+        } else {
+            // Mode normal : Tirs multiples selon le nombre d'unités
+            for (let i = 0; i < Math.min(5, playerCount); i++) {
+                bullets.push({ 
+                    x: playerPos.x - 15 + i * 8, 
+                    y: playerPos.y - 20 - i * 5, 
+                    dy: 10, 
+                    damage: 1,
+                    color: '#00E5FF'
+                });
+            }
+        }
         lastShootTime = timestamp;
     }
 
@@ -143,7 +225,7 @@ function update(timestamp) {
             
             // Collision avec obstacle ou ennemi
             if (el.type === 'obstacle' && b.x > el.x && b.x < el.x + el.w && b.y > el.y && b.y < el.y + el.h) {
-                el.hp--;
+                el.hp -= b.damage;
                 bullets.splice(i, 1);
                 if (el.hp <= 0) elements.splice(j, 1);
                 break;
@@ -157,24 +239,30 @@ function update(timestamp) {
             }
         }
 
-        if (b && b.y < 0) bullets.splice(i, 1);
+        if (b && b.y < -50) bullets.splice(i, 1);
     }
 
-    // 3. Déplacement des éléments du décor vers le bas
+    // 3. Déplacement des éléments du décor et collisions
     for (let i = elements.length - 1; i >= 0; i--) {
         let el = elements[i];
         el.y += scrollSpeed;
 
-        // Collision JOUEUR vs PORTE
+        // --- COLLISIONS JOUEUR vs ÉLÉMENTS ---
+        
+        // 1. Collision avec PORTE
         if (el.type === 'gate' && playerPos.y < el.y + el.h && playerPos.y > el.y) {
             if (Math.abs(playerPos.x - (el.x + el.w / 2)) < el.w / 2) {
-                playerCount += el.value; // Gain d'unités !
+                if (el.type === 'add') {
+                    playerCount += el.value; // Gain d'unités
+                } else {
+                    playerCount = Math.max(1, playerCount - el.value); // Perte d'unités (min 1)
+                }
                 elements.splice(i, 1); // La porte est consommée
                 continue;
             }
         }
 
-        // Collision JOUEUR vs ENNEMI (Combat rapproché)
+        // 2. Collision avec ENNEMI (Combat rapproché)
         if (el.type === 'enemy') {
             let dist = Math.hypot(playerPos.x - el.x, playerPos.y - el.y);
             if (dist < el.radius + 20) {
@@ -184,8 +272,32 @@ function update(timestamp) {
             }
         }
 
+        // 3. Collision avec OBSTACLE (Game Over)
+        if (el.type === 'obstacle' && playerPos.x > el.x && playerPos.x < el.x + el.w && playerPos.y > el.y && playerPos.y < el.y + el.h) {
+            gameOver = true;
+            continue;
+        }
+
+        // 4. Collision avec SUPER BONUS (Gatling)
+        if (el.type === 'superBonus') {
+            let dist = Math.hypot(playerPos.x - el.x, playerPos.y - el.y);
+            if (dist < el.radius + 20) {
+                superBonusActive = true;
+                superBonusTimer = SUPER_BONUS_DURATION;
+                elements.splice(i, 1); // Consommé
+                continue;
+            }
+        }
+
         // Nettoyage si sorti de l'écran par le bas
-        if (el.y > height + 100) elements.splice(i, 1);
+        if (el.y > height + 200) {
+            elements.splice(i, 1);
+            // Si on a nettoyé beaucoup d'éléments, on génère une nouvelle vague
+            if (elements.length < 5) {
+                currentLevel++;
+                spawnWave(-height, currentLevel);
+            }
+        }
     }
 
     draw();
@@ -205,23 +317,28 @@ function draw() {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Dessin des Éléments (Portes, Obstacles, Ennemis)
+    // Dessin des Éléments (Portes, Obstacles, Ennemis, Bonus)
     elements.forEach(el => {
         if (el.type === 'gate') {
-            ctx.fillStyle = 'rgba(0, 230, 118, 0.3)';
+            const isBonus = el.type === 'add';
+            ctx.fillStyle = isBonus ? 'rgba(0, 230, 118, 0.3)' : 'rgba(211, 47, 47, 0.3)';
             ctx.fillRect(el.x, el.y, el.w, el.h);
-            ctx.strokeStyle = '#00E676';
+            ctx.strokeStyle = isBonus ? '#00E676' : '#D32F2F';
             ctx.lineWidth = 2;
             ctx.strokeRect(el.x, el.y, el.w, el.h);
 
             ctx.fillStyle = '#FFF';
             ctx.font = 'bold 18px sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText(el.label, el.x + el.w / 2, el.y + 26);
+            const prefix = isBonus ? '+' : '-';
+            ctx.fillText(`${prefix}${el.value} Unités`, el.x + el.w / 2, el.y + 26);
         } 
         else if (el.type === 'obstacle') {
-            ctx.fillStyle = '#D32F2F';
+            ctx.fillStyle = '#C62828';
             ctx.fillRect(el.x, el.y, el.w, el.h);
+            ctx.strokeStyle = '#8E0000';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(el.x, el.y, el.w, el.h);
 
             ctx.fillStyle = '#FFF';
             ctx.font = 'bold 20px sans-serif';
@@ -233,30 +350,61 @@ function draw() {
             ctx.arc(el.x, el.y, el.radius, 0, Math.PI * 2);
             ctx.fillStyle = '#FF1744';
             ctx.fill();
+            ctx.strokeStyle = '#B71C1C';
+            ctx.lineWidth = 1;
+            ctx.stroke();
             ctx.closePath();
+        }
+        else if (el.type === 'superBonus') {
+            ctx.beginPath();
+            ctx.arc(el.x, el.y, el.radius, 0, Math.PI * 2);
+            ctx.fillStyle = el.color;
+            ctx.fill();
+            ctx.strokeStyle = '#FFF';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.closePath();
+            
+            ctx.fillStyle = '#000';
+            ctx.font = 'bold 14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("SUPER", el.x, el.y + 5);
         }
     });
 
     // Dessin des Balles
-    ctx.fillStyle = '#00E5FF';
     bullets.forEach(b => {
         ctx.beginPath();
-        ctx.arc(b.x, b.y, 3, 0, Math.PI * 2);
+        ctx.arc(b.x, b.y, b.color === '#FFD700' ? 4 : 3, 0, Math.PI * 2);
+        ctx.fillStyle = b.color;
         ctx.fill();
+        ctx.closePath();
     });
 
     // Dessin du Joueur (Représenté par son groupe d'unités)
-    ctx.fillStyle = '#29B6F6';
+    ctx.fillStyle = superBonusActive ? '#FFD700' : '#29B6F6'; // Doré si Gatling active
     ctx.beginPath();
-    ctx.arc(playerPos.x, playerPos.y, 18, 0, Math.PI * 2);
+    ctx.arc(playerPos.x, playerPos.y, 18 + Math.min(20, playerCount / 2), 0, Math.PI * 2); // Taille augmente avec playerCount
     ctx.fill();
+    ctx.strokeStyle = '#FFF';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.closePath();
 
-    // Compteur au-dessus du joueur
-    ctx.fillStyle = '#FFF';
-    ctx.font = 'bold 18px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(`×${playerCount}`, playerPos.x, playerPos.y - 25);
+    // Effet visuel si Gatling active
+    if (superBonusActive) {
+        ctx.strokeStyle = `rgba(255, 215, 0, ${Math.random()})`;
+        ctx.lineWidth = 4;
+        ctx.strokeRect(0, 0, width, height);
+    }
 }
+
+// Relancer le jeu après un Game Over
+canvas.addEventListener('click', () => {
+    if (gameOver) {
+        document.location.reload();
+    }
+});
 
 requestAnimationFrame(update);
 </script>
