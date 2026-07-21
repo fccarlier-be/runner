@@ -8,20 +8,38 @@ const height = Math.min(window.innerHeight, 700);
 canvas.width = width;
 canvas.height = height;
 
-// --- CHARGEMENT DES VRAIES IMAGES ---
-const images = {
-    player: new Image(),
-    enemy: new Image(),
-    obstacle: new Image(),
-    gatling: new Image()
-};
+// --- 1. CHARGEMENT DE LA SPRITESHEET UNIQUE ---
+const spriteSheet = new Image();
+spriteSheet.src = 'assets/assets_demo.png'; // Nom du fichier dans ton dossier assets/
 
-images.player.src = 'assets/player.png';
-images.enemy.src = 'assets/enemy.png';
-images.obstacle.src = 'assets/obstacle.png';
-images.gatling.src = 'assets/gatling.png';
+// Découpe précise des 4 zones sur ton image (coordonnées normalisées)
+// On utilise des pourcentages pour s'adapter parfaitement à la résolution de l'image
+let isLoaded = false;
+spriteSheet.onload = () => { isLoaded = true; };
 
-// --- ÉTAT DU JEU ---
+function drawSprite(key, dx, dy, dw, dh) {
+    if (!isLoaded) return;
+
+    const sw = spriteSheet.naturalWidth;
+    const sh = spriteSheet.naturalHeight;
+
+    // Zones estimées selon la disposition de ta planche
+    const REGIONS = {
+        player:   { x: 0.05, y: 0.05, w: 0.35, h: 0.40 },
+        enemy:    { x: 0.40, y: 0.05, w: 0.35, h: 0.40 },
+        gatling:  { x: 0.20, y: 0.50, w: 0.30, h: 0.45 },
+        obstacle: { x: 0.55, y: 0.50, w: 0.25, h: 0.45 }
+    };
+
+    const r = REGIONS[key];
+    ctx.drawImage(
+        spriteSheet,
+        r.x * sw, r.y * sh, r.w * sw, r.h * sh, // Source (découpe sur l'image d'origine)
+        dx, dy, dw, dh                          // Destination (affichage sur le canvas)
+    );
+}
+
+// --- 2. ÉTAT DU JEU ---
 let crowdCenter = { x: width / 2, y: height - 120 };
 let units = [];
 let gameOver = false;
@@ -48,7 +66,7 @@ function rearrangeCrowd() {
 }
 
 function addUnits(amt) {
-    for (let i = 0; i < amt; i++) units.push(createUnit((Math.random()-0.5)*20, (Math.random()-0.5)*20));
+    for (let i = 0; i < amt; i++) units.push(createUnit((Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20));
     rearrangeCrowd();
 }
 
@@ -58,17 +76,18 @@ function spawnWave(y) {
     const laneW = width / 2;
     elements.push({ type: 'bonus', x: laneW / 2, y: y, r: 20 });
     elements.push({ type: 'gate', x: laneW + 10, y: y + 80, w: laneW - 20, h: 45, val: 8 });
-    elements.push({ type: 'obstacle', x: laneW + 15, y: y + 200, w: laneW - 30, h: 50, hp: 40 });
+    elements.push({ type: 'obstacle', x: laneW + 15, y: y + 200, w: laneW - 30, h: 60, hp: 40 });
 
-    for (let r = 0; r < 8; r++) {
-        for (let c = 0; c < 5; c++) {
-            elements.push({ type: 'enemy', x: laneW + 20 + c * 25, y: y + 300 + r * 25, r: 12 });
+    for (let r = 0; r < 6; r++) {
+        for (let c = 0; c < 4; c++) {
+            elements.push({ type: 'enemy', x: laneW + 25 + c * 30, y: y + 320 + r * 30, r: 14 });
         }
     }
 }
 
 spawnWave(-100); spawnWave(-700); spawnWave(-1300);
 
+// --- 3. CONTRÔLES ---
 let isDown = false, lastX = 0;
 const onStart = e => { isDown = true; lastX = e.touches ? e.touches[0].clientX : e.clientX; if (gameOver) resetGame(); };
 const onMove = e => {
@@ -88,6 +107,7 @@ function resetGame() {
     spawnWave(-100); spawnWave(-700); spawnWave(-1300);
 }
 
+// --- 4. BOUCLE PRINCIPALE ---
 function loop(now) {
     if (!gameOver) { update(now); render(); } else renderGameOver();
     requestAnimationFrame(loop);
@@ -106,10 +126,10 @@ function update(now) {
         u.y += (crowdCenter.y + u.targetOy - u.y) * 0.2;
     });
 
-    const fireRate = superBonusTimer > 0 ? 70 : 180;
+    const fireRate = superBonusTimer > 0 ? 60 : 160;
     if (now - lastShoot > fireRate) {
         units.slice(0, 15).forEach(u => {
-            bullets.push({ x: u.x, y: u.y - 12, vy: superBonusTimer > 0 ? -14 : -10, dmg: superBonusTimer > 0 ? 3 : 1 });
+            bullets.push({ x: u.x, y: u.y - 15, vy: superBonusTimer > 0 ? -14 : -10, dmg: superBonusTimer > 0 ? 3 : 1 });
         });
         lastShoot = now;
     }
@@ -122,7 +142,7 @@ function update(now) {
                 el.hp -= b.dmg; bullets.splice(i, 1);
                 if (el.hp <= 0) elements.splice(j, 1);
                 break;
-            } else if (el.type === 'enemy' && Math.hypot(b.x - el.x, b.y - el.y) < el.r + 4) {
+            } else if (el.type === 'enemy' && Math.hypot(b.x - el.x, b.y - el.y) < el.r + 6) {
                 elements.splice(j, 1); bullets.splice(i, 1); break;
             }
         }
@@ -143,7 +163,7 @@ function update(now) {
         }
         if (el.type === 'enemy') {
             for (let uIdx = units.length - 1; uIdx >= 0; uIdx--) {
-                if (Math.hypot(units[uIdx].x - el.x, units[uIdx].y - el.y) < 14 + el.r) {
+                if (Math.hypot(units[uIdx].x - el.x, units[uIdx].y - el.y) < 16 + el.r) {
                     units.splice(uIdx, 1); elements.splice(i, 1); rearrangeCrowd();
                     if (units.length === 0) gameOver = true;
                     break;
@@ -155,6 +175,7 @@ function update(now) {
     unitCountEl.textContent = units.length;
 }
 
+// --- 5. RENDU GRAPHIQUE ---
 function render() {
     ctx.clearRect(0, 0, width, height);
 
@@ -162,31 +183,31 @@ function render() {
     ctx.strokeStyle = '#2A2A35'; ctx.setLineDash([8, 8]);
     ctx.beginPath(); ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, height); ctx.stroke(); ctx.setLineDash([]);
 
-    // Dessin des Éléments
+    // Dessin des éléments
     elements.forEach(el => {
         if (el.type === 'bonus') {
-            ctx.drawImage(images.gatling, el.x - 20, el.y - 20, 40, 40);
+            drawSprite('gatling', el.x - 22, el.y - 22, 44, 44);
         } else if (el.type === 'gate') {
             ctx.fillStyle = 'rgba(0, 230, 118, 0.25)'; ctx.fillRect(el.x, el.y, el.w, el.h);
             ctx.strokeStyle = '#00E676'; ctx.lineWidth = 2; ctx.strokeRect(el.x, el.y, el.w, el.h);
             ctx.fillStyle = '#FFF'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'center';
             ctx.fillText(`+${el.val} Soldats`, el.x + el.w / 2, el.y + 28);
         } else if (el.type === 'obstacle') {
-            ctx.drawImage(images.obstacle, el.x, el.y, el.w, el.h);
+            drawSprite('obstacle', el.x, el.y, el.w, el.h);
             ctx.fillStyle = '#FFF'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
             ctx.fillText(el.hp, el.x + el.w / 2, el.y + el.h / 2 + 7);
         } else if (el.type === 'enemy') {
-            ctx.drawImage(images.enemy, el.x - 14, el.y - 14, 28, 28);
+            drawSprite('enemy', el.x - 16, el.y - 16, 32, 32);
         }
     });
 
-    // Projectiles
+    // Tirs
     ctx.fillStyle = superBonusTimer > 0 ? '#FFD700' : '#00E5FF';
     bullets.forEach(b => { ctx.beginPath(); ctx.arc(b.x, b.y, 3, 0, Math.PI * 2); ctx.fill(); });
 
-    // Soldats Bleus
+    // Joueurs
     units.forEach(u => {
-        ctx.drawImage(images.player, u.x - 14, u.y - 14, 28, 28);
+        drawSprite('player', u.x - 16, u.y - 16, 32, 32);
     });
 }
 
