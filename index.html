@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Runner Shooter Proto</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1a1a1a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: sans-serif;
+        }
+        canvas {
+            border: 2px solid #333;
+            background: #222;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            touch-action: none;
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// Adaptation à la taille de l'écran mobile
+const width = Math.min(window.innerWidth, 430);
+const height = Math.min(window.innerHeight, 932);
+canvas.width = width;
+canvas.height = height;
+
+// --- ÉTATS DU JEU ---
+let player = { x: width / 2, y: height - 80, radius: 15, speed: 5 };
+let bullets = [];
+let obstacles = [];
+let gates = [];
+let lastShootTime = 0;
+let shootInterval = 150; // Vitesse de tir (ms)
+
+// Création d'un bloc obstacle d'exemple (comme le bloc de bois de la pub)
+obstacles.push({
+    x: width / 2 - 60,
+    y: 150,
+    w: 120,
+    h: 100,
+    hp: 100 // Points de vie du bloc
+});
+
+// Création d'une porte multiplicatrice (+5 balles / unités)
+gates.push({
+    x: 50,
+    y: 320,
+    w: width - 100,
+    h: 40,
+    value: 5,
+    type: 'add' // 'add' ou 'multiply'
+});
+
+// --- CONTRÔLES (Souri / Touch) ---
+let isDragging = false;
+let startX = 0;
+
+const handleStart = (e) => {
+    isDragging = true;
+    startX = e.touches ? e.touches[0].clientX : e.clientX;
+};
+
+const handleMove = (e) => {
+    if (!isDragging) return;
+    const currentX = e.touches ? e.touches[0].clientX : e.clientX;
+    const deltaX = currentX - startX;
+    player.x += deltaX;
+    
+    // Limites de l'écran
+    player.x = Math.max(player.radius, Math.min(width - player.radius, player.x));
+    startX = currentX;
+};
+
+const handleEnd = () => isDragging = false;
+
+canvas.addEventListener('mousedown', handleStart);
+canvas.addEventListener('mousemove', handleMove);
+window.addEventListener('mouseup', handleEnd);
+
+canvas.addEventListener('touchstart', handleStart);
+canvas.addEventListener('touchmove', handleMove);
+canvas.addEventListener('touchend', handleEnd);
+
+// --- BOUCLE DE JEU ---
+function update(timestamp) {
+    // 1. Tir automatique
+    if (timestamp - lastShootTime > shootInterval) {
+        bullets.push({ x: player.x, y: player.y - player.radius, radius: 4, dy: 8 });
+        lastShootTime = timestamp;
+    }
+
+    // 2. Déplacement des projectiles
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        let b = bullets[i];
+        b.y -= b.dy;
+
+        // Collision avec les blocs obstacles
+        for (let j = obstacles.length - 1; j >= 0; j--) {
+            let obs = obstacles[j];
+            if (b.x > obs.x && b.x < obs.x + obs.w && b.y > obs.y && b.y < obs.y + obs.h) {
+                obs.hp--;
+                bullets.splice(i, 1); // Détruire la balle
+                if (obs.hp <= 0) obstacles.splice(j, 1); // Détruire le bloc si HP = 0
+                break;
+            }
+        }
+
+        // Nettoyage des balles hors écran
+        if (b && b.y < 0) bullets.splice(i, 1);
+    }
+
+    draw();
+    requestAnimationFrame(update);
+}
+
+// --- RENDU GRAPHIQUE ---
+function draw() {
+    ctx.clearRect(0, 0, width, height);
+
+    // Dessiner le Joueur (Bleu)
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+    ctx.fillStyle = '#007AFF';
+    ctx.fill();
+    ctx.closePath();
+
+    // Dessiner les Projectiles
+    ctx.fillStyle = '#00E5FF';
+    bullets.forEach(b => {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.closePath();
+    });
+
+    // Dessiner les Portes Multiplicatrices
+    gates.forEach(g => {
+        ctx.fillStyle = 'rgba(0, 200, 83, 0.4)';
+        ctx.fillRect(g.x, g.y, g.w, g.h);
+        ctx.strokeStyle = '#00C853';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(g.x, g.y, g.w, g.h);
+
+        ctx.fillStyle = '#FFF';
+        ctx.font = 'bold 20px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`+${g.value} Tirs`, g.x + g.w / 2, g.y + 26);
+    });
+
+    // Dessiner les Blocs Obstacles
+    obstacles.forEach(obs => {
+        ctx.fillStyle = '#D84315';
+        ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
+
+        ctx.fillStyle = '#FFF';
+        ctx.font = 'bold 24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(obs.hp, obs.x + obs.w / 2, obs.y + obs.h / 2 + 8);
+    });
+}
+
+requestAnimationFrame(update);
+</script>
+</body>
+</html>
