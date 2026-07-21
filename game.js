@@ -8,6 +8,20 @@ const height = Math.min(window.innerHeight, 700);
 canvas.width = width;
 canvas.height = height;
 
+// --- CHARGEMENT DES VRAIES IMAGES ---
+const images = {
+    player: new Image(),
+    enemy: new Image(),
+    obstacle: new Image(),
+    gatling: new Image()
+};
+
+images.player.src = 'assets/player.png';
+images.enemy.src = 'assets/enemy.png';
+images.obstacle.src = 'assets/obstacle.png';
+images.gatling.src = 'assets/gatling.png';
+
+// --- ÉTAT DU JEU ---
 let crowdCenter = { x: width / 2, y: height - 120 };
 let units = [];
 let gameOver = false;
@@ -21,7 +35,7 @@ function createUnit(ox = 0, oy = 0) {
 }
 
 function rearrangeCrowd() {
-    const spacing = 16;
+    const spacing = 18;
     units.forEach((u, i) => {
         if (i === 0) { u.targetOx = 0; u.targetOy = 0; }
         else {
@@ -48,7 +62,7 @@ function spawnWave(y) {
 
     for (let r = 0; r < 8; r++) {
         for (let c = 0; c < 5; c++) {
-            elements.push({ type: 'enemy', x: laneW + 20 + c * 24, y: y + 300 + r * 24, r: 12 });
+            elements.push({ type: 'enemy', x: laneW + 20 + c * 25, y: y + 300 + r * 25, r: 12 });
         }
     }
 }
@@ -148,21 +162,21 @@ function render() {
     ctx.strokeStyle = '#2A2A35'; ctx.setLineDash([8, 8]);
     ctx.beginPath(); ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, height); ctx.stroke(); ctx.setLineDash([]);
 
-    // Éléments
+    // Dessin des Éléments
     elements.forEach(el => {
         if (el.type === 'bonus') {
-            ctx.drawImage(Sprites.gatling, el.x - 20, el.y - 20, 40, 40);
+            ctx.drawImage(images.gatling, el.x - 20, el.y - 20, 40, 40);
         } else if (el.type === 'gate') {
-            ctx.fillStyle = 'rgba(0, 230, 118, 0.2)'; ctx.fillRect(el.x, el.y, el.w, el.h);
+            ctx.fillStyle = 'rgba(0, 230, 118, 0.25)'; ctx.fillRect(el.x, el.y, el.w, el.h);
             ctx.strokeStyle = '#00E676'; ctx.lineWidth = 2; ctx.strokeRect(el.x, el.y, el.w, el.h);
             ctx.fillStyle = '#FFF'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'center';
             ctx.fillText(`+${el.val} Soldats`, el.x + el.w / 2, el.y + 28);
         } else if (el.type === 'obstacle') {
-            ctx.drawImage(Sprites.obstacle, el.x, el.y, el.w, el.h);
+            ctx.drawImage(images.obstacle, el.x, el.y, el.w, el.h);
             ctx.fillStyle = '#FFF'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
             ctx.fillText(el.hp, el.x + el.w / 2, el.y + el.h / 2 + 7);
         } else if (el.type === 'enemy') {
-            ctx.drawImage(Sprites.enemy, el.x - 14, el.y - 14, 28, 28);
+            ctx.drawImage(images.enemy, el.x - 14, el.y - 14, 28, 28);
         }
     });
 
@@ -170,9 +184,9 @@ function render() {
     ctx.fillStyle = superBonusTimer > 0 ? '#FFD700' : '#00E5FF';
     bullets.forEach(b => { ctx.beginPath(); ctx.arc(b.x, b.y, 3, 0, Math.PI * 2); ctx.fill(); });
 
-    // Soldats
+    // Soldats Bleus
     units.forEach(u => {
-        ctx.drawImage(Sprites.player, u.x - 14, u.y - 14, 28, 28);
+        ctx.drawImage(images.player, u.x - 14, u.y - 14, 28, 28);
     });
 }
 
