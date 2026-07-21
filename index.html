@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Runner Shooter Proto - Fix</title>
+    <title>Runner Shooter Proto - Crowd Effect</title>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -35,7 +35,7 @@
 </head>
 <body>
 
-<div id="ui">Unités: <span id="unitCount">1</span> | Gatling: <span id="gatlingStatus">OFF</span></div>
+<div id="ui">Soldats: <span id="unitCount" style="color: #00E5FF;">1</span> | Gatling: <span id="gatlingStatus">OFF</span></div>
 <canvas id="gameCanvas"></canvas>
 
 <script>
@@ -50,16 +50,58 @@ canvas.width = width;
 canvas.height = height;
 
 // --- ÉTAT DU JEU ---
-let playerCount = 1;
-let playerX = width / 2;
-let playerY = height - 100;
+let crowdCenter = { x: width / 2, y: height - 120 };
+let units = []; // Tableau contenant la position de CHAQUE soldat du joueur
 let gameOver = false;
 
-let superBonusTimer = 0; // Si > 0, Gatling active
+let superBonusTimer = 0;
 let lastShoot = 0;
 
 let bullets = [];
 let elements = [];
+
+// Création d'un soldat individuel
+function createUnit(offsetX = 0, offsetY = 0) {
+    return {
+        x: crowdCenter.x + offsetX,
+        y: crowdCenter.y + offsetY,
+        targetOffsetX: offsetX,
+        targetOffsetY: offsetY,
+        radius: 6
+    };
+}
+
+// Repositionne tous les soldats en cercle compact autour du centre
+function rearrangeCrowd() {
+    const count = units.length;
+    const spacing = 14;
+    units.forEach((u, i) => {
+        if (i === 0) {
+            u.targetOffsetX = 0;
+            u.targetOffsetY = 0;
+        } else {
+            // Disposition en spirale/cercle compact
+            const angle = i * 0.8;
+            const radius = Math.sqrt(i) * spacing;
+            u.targetOffsetX = Math.cos(angle) * radius;
+            u.targetOffsetY = Math.sin(angle) * radius;
+        }
+    });
+}
+
+// Ajouter des soldats
+function addUnits(amount) {
+    for (let i = 0; i < amount; i++) {
+        // Apparition près du centre
+        let rx = (Math.random() - 0.5) * 20;
+        let ry = (Math.random() - 0.5) * 20;
+        units.push(createUnit(rx, ry));
+    }
+    rearrangeCrowd();
+}
+
+// Initialisation du premier soldat
+units.push(createUnit(0, 0));
 
 // --- GENERATEUR DE VAGUES ---
 function spawnWave(y) {
@@ -73,14 +115,14 @@ function spawnWave(y) {
         r: 18
     });
 
-    // DROITE : Porte bonus
+    // DROITE : Porte multiplicatrice / addition
     elements.push({
         type: 'gate',
         x: laneW + 10,
         y: y + 80,
         w: laneW - 20,
         h: 40,
-        val: 5
+        val: 10
     });
 
     // DROITE : Obstacle mortel
@@ -90,17 +132,17 @@ function spawnWave(y) {
         y: y + 200,
         w: laneW - 40,
         h: 50,
-        hp: 30
+        hp: 45
     });
 
-    // DROITE : Horde massive d'ennemis
-    for (let r = 0; r < 8; r++) {
-        for (let c = 0; c < 5; c++) {
+    // DROITE : Horde massive d'ennemis rouges
+    for (let r = 0; r < 10; r++) {
+        for (let c = 0; c < 6; c++) {
             elements.push({
                 type: 'enemy',
-                x: laneW + 20 + c * 25,
-                y: y + 300 + r * 25,
-                r: 9
+                x: laneW + 15 + c * 22,
+                y: y + 300 + r * 22,
+                r: 8
             });
         }
     }
@@ -125,8 +167,8 @@ function onMove(e) {
     if (!isDown || gameOver) return;
     const currentX = e.touches ? e.touches[0].clientX : e.clientX;
     const delta = currentX - lastX;
-    playerX += delta;
-    playerX = Math.max(25, Math.min(width - 25, playerX));
+    crowdCenter.x += delta;
+    crowdCenter.x = Math.max(30, Math.min(width - 30, crowdCenter.x));
     lastX = currentX;
 }
 
@@ -140,8 +182,8 @@ canvas.addEventListener('touchmove', onMove);
 canvas.addEventListener('touchend', onEnd);
 
 function resetGame() {
-    playerCount = 1;
-    playerX = width / 2;
+    crowdCenter = { x: width / 2, y: height - 120 };
+    units = [createUnit(0, 0)];
     superBonusTimer = 0;
     bullets = [];
     elements = [];
@@ -173,22 +215,30 @@ function update(now) {
         gatlingStatusEl.style.color = "#FFF";
     }
 
-    // 2. Tir automatique
-    const fireRate = superBonusTimer > 0 ? 60 : 180; // Plus rapide en Gatling
+    // 2. Mise à jour de la position fluide de chaque soldat dans la foule
+    units.forEach(u => {
+        let targetX = crowdCenter.x + u.targetOffsetX;
+        let targetY = crowdCenter.y + u.targetOffsetY;
+        u.x += (targetX - u.x) * 0.2; // Smooth movement
+        u.y += (targetY - u.y) * 0.2;
+    });
+
+    // 3. Tir automatique (Chaque soldat tire !)
+    const fireRate = superBonusTimer > 0 ? 80 : 200;
     if (now - lastShoot > fireRate) {
-        if (superBonusTimer > 0) {
-            // Tirs Gatling en éventail
-            bullets.push({ x: playerX - 10, y: playerY - 15, vy: -12, dmg: 2 });
-            bullets.push({ x: playerX, y: playerY - 20, vy: -14, dmg: 3 });
-            bullets.push({ x: playerX + 10, y: playerY - 15, vy: -12, dmg: 2 });
-        } else {
-            // Tir standard
-            bullets.push({ x: playerX, y: playerY - 15, vy: -9, dmg: 1 });
-        }
+        // En mode normal, max 12 tirs simulés pour ne pas faire ramer, ou 1 tir par soldat
+        const shooterUnits = units.slice(0, 15); 
+        shooterUnits.forEach(u => {
+            if (superBonusTimer > 0) {
+                bullets.push({ x: u.x, y: u.y - 10, vy: -14, dmg: 3, isGold: true });
+            } else {
+                bullets.push({ x: u.x, y: u.y - 10, vy: -10, dmg: 1, isGold: false });
+            }
+        });
         lastShoot = now;
     }
 
-    // 3. Déplacement des balles
+    // 4. Déplacement des balles
     for (let i = bullets.length - 1; i >= 0; i--) {
         let b = bullets[i];
         b.y += b.vy;
@@ -216,42 +266,49 @@ function update(now) {
         if (b && b.y < 0) bullets.splice(i, 1);
     }
 
-    // 4. Défilement du terrain & Collisions Joueur
+    // 5. Défilement du terrain & Collisions avec la FOULE
     const speed = 2.2;
     for (let i = elements.length - 1; i >= 0; i--) {
         let el = elements[i];
         el.y += speed;
 
-        // Collision : SUPER BONUS
+        // Collision : SUPER BONUS (Gatling)
         if (el.type === 'bonus') {
-            if (Math.hypot(playerX - el.x, playerY - el.y) < el.r + 20) {
-                superBonusTimer = 400; // ~6-7 secondes
+            if (Math.hypot(crowdCenter.x - el.x, crowdCenter.y - el.y) < el.r + 25) {
+                superBonusTimer = 400;
                 elements.splice(i, 1);
                 continue;
             }
         }
 
-        // Collision : PORTE
-        if (el.type === 'gate' && playerY < el.y + el.h && playerY > el.y) {
-            if (Math.abs(playerX - (el.x + el.w / 2)) < el.w / 2) {
-                playerCount += el.val;
+        // Collision : PORTE MULTIPLICATRICE
+        if (el.type === 'gate' && crowdCenter.y < el.y + el.h && crowdCenter.y > el.y) {
+            if (Math.abs(crowdCenter.x - (el.x + el.w / 2)) < el.w / 2) {
+                addUnits(el.val); // Multiplie / ajoute physiquement des soldats !
                 elements.splice(i, 1);
                 continue;
             }
         }
 
-        // Collision : OBSTACLE (Mortel !)
-        if (el.type === 'obstacle' && playerX > el.x && playerX < el.x + el.w && playerY > el.y && playerY < el.y + el.h) {
-            gameOver = true;
+        // Collision : OBSTACLE (Mortel si la foule rentre dedans)
+        if (el.type === 'obstacle') {
+            if (crowdCenter.x > el.x - 15 && crowdCenter.x < el.x + el.w + 15 &&
+                crowdCenter.y > el.y && crowdCenter.y < el.y + el.h) {
+                gameOver = true;
+            }
         }
 
-        // Collision : ENNEMI
+        // Collision : ENNEMI vs SOLDATS (Mêlée soldat par soldat)
         if (el.type === 'enemy') {
-            if (Math.hypot(playerX - el.x, playerY - el.y) < el.r + 15) {
-                playerCount--;
-                elements.splice(i, 1);
-                if (playerCount <= 0) gameOver = true;
-                continue;
+            for (let uIdx = units.length - 1; uIdx >= 0; uIdx--) {
+                let u = units[uIdx];
+                if (Math.hypot(u.x - el.x, u.y - el.y) < u.radius + el.r) {
+                    units.splice(uIdx, 1); // Le soldat meurt
+                    elements.splice(i, 1); // L'ennemi meurt
+                    rearrangeCrowd();
+                    if (units.length === 0) gameOver = true;
+                    break;
+                }
             }
         }
 
@@ -259,8 +316,8 @@ function update(now) {
         if (el.y > height + 100) elements.splice(i, 1);
     }
 
-    // Mettre à jour l'IHM
-    unitCountEl.textContent = playerCount;
+    // Mettre à jour l'IHM avec le nombre réel d'unités visibles
+    unitCountEl.textContent = units.length;
 }
 
 function render() {
@@ -291,11 +348,12 @@ function render() {
             ctx.fillStyle = 'rgba(0, 230, 118, 0.25)';
             ctx.fillRect(el.x, el.y, el.w, el.h);
             ctx.strokeStyle = '#00E676';
+            ctx.lineWidth = 2;
             ctx.strokeRect(el.x, el.y, el.w, el.h);
             ctx.fillStyle = '#FFF';
             ctx.font = 'bold 16px sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText(`+${el.val} Unités`, el.x + el.w / 2, el.y + 25);
+            ctx.fillText(`+${el.val} Soldats`, el.x + el.w / 2, el.y + 25);
         }
         else if (el.type === 'obstacle') {
             ctx.fillStyle = '#D32F2F';
@@ -314,29 +372,34 @@ function render() {
     });
 
     // Dessin des balles
-    ctx.fillStyle = superBonusTimer > 0 ? '#FFD700' : '#00E5FF';
     bullets.forEach(b => {
+        ctx.fillStyle = b.isGold ? '#FFD700' : '#00E5FF';
         ctx.beginPath();
-        ctx.arc(b.x, b.y, 3, 0, Math.PI * 2);
+        ctx.arc(b.x, b.y, b.isGold ? 3.5 : 2.5, 0, Math.PI * 2);
         ctx.fill();
     });
 
-    // Dessin du joueur
-    ctx.fillStyle = superBonusTimer > 0 ? '#FFD700' : '#29B6F6';
-    ctx.beginPath();
-    ctx.arc(playerX, playerY, 16, 0, Math.PI * 2);
-    ctx.fill();
+    // Dessin de CHAQUE SOLDAT de la foule (Bleus ou Dorés en Gatling)
+    units.forEach(u => {
+        ctx.fillStyle = superBonusTimer > 0 ? '#FFD700' : '#00B0FF';
+        ctx.beginPath();
+        ctx.arc(u.x, u.y, u.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#FFF';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    });
 }
 
 function renderGameOver() {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
     ctx.fillRect(0, 0, width, height);
     ctx.fillStyle = '#FFF';
     ctx.font = 'bold 30px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText("GAME OVER", width / 2, height / 2 - 20);
     ctx.font = '16px sans-serif';
-    ctx.fillText("Clique ou touche l'écran pour rejouer", width / 2, height / 2 + 20);
+    ctx.fillText("Touche l'écran pour rejouer", width / 2, height / 2 + 20);
 }
 
 // Lancement
