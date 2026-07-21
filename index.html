@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Runner Shooter Proto - V3</title>
+    <title>Runner Shooter Proto - Fix</title>
     <style>
+        * { box-sizing: border-box; }
         body {
             margin: 0;
             padding: 0;
@@ -22,391 +23,324 @@
             background: #1a1a1f;
             touch-action: none;
         }
-        #gameStatus {
+        #ui {
             position: absolute;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
+            top: 15px;
             font-size: 18px;
+            font-weight: bold;
             pointer-events: none;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
         }
     </style>
 </head>
 <body>
 
-<div id="gameStatus">Unités: <span id="unitCount">1</span> | Niveau: <span id="levelCount">1</span></div>
+<div id="ui">Unités: <span id="unitCount">1</span> | Gatling: <span id="gatlingStatus">OFF</span></div>
 <canvas id="gameCanvas"></canvas>
 
 <script>
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const unitCountEl = document.getElementById('unitCount');
-const levelCountEl = document.getElementById('levelCount');
+const gatlingStatusEl = document.getElementById('gatlingStatus');
 
-const width = Math.min(window.innerWidth, 430);
-const height = Math.min(window.innerHeight, 932);
+const width = Math.min(window.innerWidth, 400);
+const height = Math.min(window.innerHeight, 700);
 canvas.width = width;
 canvas.height = height;
 
 // --- ÉTAT DU JEU ---
-let scrollSpeed = 2.5; // Vitesse d'avancée du décor
-let playerCount = 1; // Nombre d'unités actuelles
-let playerPos = { x: width / 2, y: height - 120 };
+let playerCount = 1;
+let playerX = width / 2;
+let playerY = height - 100;
 let gameOver = false;
-let currentLevel = 1;
+
+let superBonusTimer = 0; // Si > 0, Gatling active
+let lastShoot = 0;
 
 let bullets = [];
-let elements = []; // Contient portes, obstacles, ennemis et super-bonus
-let lastShootTime = 0;
-let shootInterval = 200; // Cadence de tir de base
+let elements = [];
 
-// État du super-bonus (Gatling)
-let superBonusActive = false;
-let superBonusTimer = 0;
-const SUPER_BONUS_DURATION = 10000; // 10 secondes
+// --- GENERATEUR DE VAGUES ---
+function spawnWave(y) {
+    const laneW = width / 2;
 
-// --- GENERATION DES VAGUES (Double Voie Spécifique) ---
-function spawnWave(yPos, level) {
-    const laneWidth = width / 2;
+    // GAUCHE : Super Bonus (Gatling)
+    elements.push({
+        type: 'bonus',
+        x: laneW / 2,
+        y: y,
+        r: 18
+    });
 
-    // --- Voie de GAUCHE : Dédiée au Super Bonus ---
-    // On place l'item "Super Bonus" qui débloque la gatling
-    if (Math.random() < 0.4) { // 40% de chance d'apparaître
-        elements.push({
-            type: 'superBonus',
-            x: laneWidth / 2, // Centré sur la voie de gauche
-            y: yPos,
-            radius: 20,
-            color: '#FFD700' // Doré
-        });
-    }
+    // DROITE : Porte bonus
+    elements.push({
+        type: 'gate',
+        x: laneW + 10,
+        y: y + 80,
+        w: laneW - 20,
+        h: 40,
+        val: 5
+    });
 
-    // --- Voie de DROITE : Bonus Classiques, Obstacles et Horde ---
-    // 1. Une porte bonus ou malus
-    if (Math.random() < 0.7) {
-        elements.push({
-            type: 'gate',
-            x: laneWidth + 10,
-            y: yPos + 100,
-            w: laneWidth - 20,
-            h: 40,
-            value: Math.floor(Math.random() * 10) + 1,
-            type: Math.random() < 0.8 ? 'add' : 'sub', // 80% chance bonus, 20% malus
-        });
-    }
+    // DROITE : Obstacle mortel
+    elements.push({
+        type: 'obstacle',
+        x: laneW + 20,
+        y: y + 200,
+        w: laneW - 40,
+        h: 50,
+        hp: 30
+    });
 
-    // 2. Un obstacle lourd
-    if (Math.random() < 0.6) {
-        elements.push({
-            type: 'obstacle',
-            x: laneWidth + 30,
-            y: yPos + 250,
-            w: laneWidth - 60,
-            h: 60,
-            hp: 20 + level * 5 // HP augmentent avec le niveau
-        });
-    }
-
-    // 3. Une HORDE beaucoup plus conséquente
-    const enemyRows = 10 + level * 2; // De plus en plus de rangées
-    const enemyCols = 6;
-    for (let i = 0; i < enemyRows; i++) {
-        for (let j = 0; j < enemyCols; j++) {
+    // DROITE : Horde massive d'ennemis
+    for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 5; c++) {
             elements.push({
                 type: 'enemy',
-                x: laneWidth + 25 + j * 30,
-                y: yPos + 400 + i * 30,
-                radius: 10,
-                hp: 1
+                x: laneW + 20 + c * 25,
+                y: y + 300 + r * 25,
+                r: 9
             });
         }
     }
 }
 
-// Génération de vagues espacées
-for (let i = 0; i < 5; i++) {
-    spawnWave(-100 - i * 800, currentLevel);
+// Initialisation de 3 vagues
+spawnWave(-100);
+spawnWave(-700);
+spawnWave(-1300);
+
+// --- CONTRÔLES ---
+let isDown = false;
+let lastX = 0;
+
+function onStart(e) {
+    isDown = true;
+    lastX = e.touches ? e.touches[0].clientX : e.clientX;
+    if (gameOver) resetGame();
 }
 
-// --- CONTRÔLES TACTILES / SOURIS ---
-let isDragging = false;
-let startX = 0;
-
-const handleStart = (e) => {
-    isDragging = true;
-    startX = e.touches ? e.touches[0].clientX : e.clientX;
-};
-
-const handleMove = (e) => {
-    if (!isDragging || gameOver) return;
+function onMove(e) {
+    if (!isDown || gameOver) return;
     const currentX = e.touches ? e.touches[0].clientX : e.clientX;
-    const deltaX = currentX - startX;
-    playerPos.x += deltaX;
-    
-    // Garder le joueur dans l'écran
-    playerPos.x = Math.max(30, Math.min(width - 30, playerPos.x));
-    startX = currentX;
-};
+    const delta = currentX - lastX;
+    playerX += delta;
+    playerX = Math.max(25, Math.min(width - 25, playerX));
+    lastX = currentX;
+}
 
-const handleEnd = () => isDragging = false;
+function onEnd() { isDown = false; }
 
-canvas.addEventListener('mousedown', handleStart);
-canvas.addEventListener('mousemove', handleMove);
-window.addEventListener('mouseup', handleEnd);
-canvas.addEventListener('touchstart', handleStart);
-canvas.addEventListener('touchmove', handleMove);
-canvas.addEventListener('touchend', handleEnd);
+canvas.addEventListener('mousedown', onStart);
+canvas.addEventListener('mousemove', onMove);
+window.addEventListener('mouseup', onEnd);
+canvas.addEventListener('touchstart', onStart);
+canvas.addEventListener('touchmove', onMove);
+canvas.addEventListener('touchend', onEnd);
 
-// --- BOUCLE PRINCIPALE ---
-function update(timestamp) {
-    if (gameOver) {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-        ctx.fillRect(0, 0, width, height);
-        ctx.fillStyle = '#FFF';
-        ctx.font = 'bold 36px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText("GAME OVER", width / 2, height / 2);
-        ctx.font = '24px sans-serif';
-        ctx.fillText("Tapez pour recommencer", width / 2, height / 2 + 40);
-        return;
+function resetGame() {
+    playerCount = 1;
+    playerX = width / 2;
+    superBonusTimer = 0;
+    bullets = [];
+    elements = [];
+    gameOver = false;
+    spawnWave(-100);
+    spawnWave(-700);
+    spawnWave(-1300);
+}
+
+// --- BOUCLE DE JEU ---
+function loop(now) {
+    if (!gameOver) {
+        update(now);
+        render();
+    } else {
+        renderGameOver();
+    }
+    requestAnimationFrame(loop);
+}
+
+function update(now) {
+    // 1. Décompte Gatling
+    if (superBonusTimer > 0) {
+        superBonusTimer--;
+        gatlingStatusEl.textContent = "ON 🔥";
+        gatlingStatusEl.style.color = "#FFD700";
+    } else {
+        gatlingStatusEl.textContent = "OFF";
+        gatlingStatusEl.style.color = "#FFF";
     }
 
-    if (playerCount <= 0) {
-        gameOver = true;
-        return;
-    }
-
-    // Mise à jour de l'UI
-    unitCountEl.textContent = playerCount;
-    levelCountEl.textContent = currentLevel;
-
-    // Gestion du super bonus
-    if (superBonusActive) {
-        superBonusTimer -= 16.67; // On suppose 60fps (1000ms / 60)
-        if (superBonusTimer <= 0) {
-            superBonusActive = false;
-            shootInterval = 200; // Cadence normale
+    // 2. Tir automatique
+    const fireRate = superBonusTimer > 0 ? 60 : 180; // Plus rapide en Gatling
+    if (now - lastShoot > fireRate) {
+        if (superBonusTimer > 0) {
+            // Tirs Gatling en éventail
+            bullets.push({ x: playerX - 10, y: playerY - 15, vy: -12, dmg: 2 });
+            bullets.push({ x: playerX, y: playerY - 20, vy: -14, dmg: 3 });
+            bullets.push({ x: playerX + 10, y: playerY - 15, vy: -12, dmg: 2 });
         } else {
-            shootInterval = 50; // Cadence Gatling déchaînée
+            // Tir standard
+            bullets.push({ x: playerX, y: playerY - 15, vy: -9, dmg: 1 });
         }
+        lastShoot = now;
     }
 
-    // 1. Tir automatique
-    if (timestamp - lastShootTime > shootInterval) {
-        if (superBonusActive) {
-            // Mode Gatling : Tir en éventail dévastateur
-            bullets.push({ x: playerPos.x - 10, y: playerPos.y - 20, dy: 15, damage: 2, color: '#FFD700' });
-            bullets.push({ x: playerPos.x, y: playerPos.y - 30, dy: 16, damage: 3, color: '#FFD700' });
-            bullets.push({ x: playerPos.x + 10, y: playerPos.y - 20, dy: 15, damage: 2, color: '#FFD700' });
-        } else {
-            // Mode normal : Tirs multiples selon le nombre d'unités
-            for (let i = 0; i < Math.min(5, playerCount); i++) {
-                bullets.push({ 
-                    x: playerPos.x - 15 + i * 8, 
-                    y: playerPos.y - 20 - i * 5, 
-                    dy: 10, 
-                    damage: 1,
-                    color: '#00E5FF'
-                });
-            }
-        }
-        lastShootTime = timestamp;
-    }
-
-    // 2. Déplacement des projectiles
+    // 3. Déplacement des balles
     for (let i = bullets.length - 1; i >= 0; i--) {
         let b = bullets[i];
-        b.y -= b.dy;
+        b.y += b.vy;
 
-        // Collision balles vs éléments
+        // Collision balle vs obstacles/ennemis
         for (let j = elements.length - 1; j >= 0; j--) {
             let el = elements[j];
-            
-            // Collision avec obstacle ou ennemi
+
             if (el.type === 'obstacle' && b.x > el.x && b.x < el.x + el.w && b.y > el.y && b.y < el.y + el.h) {
-                el.hp -= b.damage;
+                el.hp -= b.dmg;
                 bullets.splice(i, 1);
                 if (el.hp <= 0) elements.splice(j, 1);
                 break;
-            } else if (el.type === 'enemy') {
+            } 
+            else if (el.type === 'enemy') {
                 let dist = Math.hypot(b.x - el.x, b.y - el.y);
-                if (dist < el.radius + 4) {
-                    elements.splice(j, 1); // L'ennemi meurt
-                    bullets.splice(i, 1); // La balle disparaît
+                if (dist < el.r + 4) {
+                    elements.splice(j, 1);
+                    bullets.splice(i, 1);
                     break;
                 }
             }
         }
 
-        if (b && b.y < -50) bullets.splice(i, 1);
+        if (b && b.y < 0) bullets.splice(i, 1);
     }
 
-    // 3. Déplacement des éléments du décor et collisions
+    // 4. Défilement du terrain & Collisions Joueur
+    const speed = 2.2;
     for (let i = elements.length - 1; i >= 0; i--) {
         let el = elements[i];
-        el.y += scrollSpeed;
+        el.y += speed;
 
-        // --- COLLISIONS JOUEUR vs ÉLÉMENTS ---
-        
-        // 1. Collision avec PORTE
-        if (el.type === 'gate' && playerPos.y < el.y + el.h && playerPos.y > el.y) {
-            if (Math.abs(playerPos.x - (el.x + el.w / 2)) < el.w / 2) {
-                if (el.type === 'add') {
-                    playerCount += el.value; // Gain d'unités
-                } else {
-                    playerCount = Math.max(1, playerCount - el.value); // Perte d'unités (min 1)
-                }
-                elements.splice(i, 1); // La porte est consommée
+        // Collision : SUPER BONUS
+        if (el.type === 'bonus') {
+            if (Math.hypot(playerX - el.x, playerY - el.y) < el.r + 20) {
+                superBonusTimer = 400; // ~6-7 secondes
+                elements.splice(i, 1);
                 continue;
             }
         }
 
-        // 2. Collision avec ENNEMI (Combat rapproché)
-        if (el.type === 'enemy') {
-            let dist = Math.hypot(playerPos.x - el.x, playerPos.y - el.y);
-            if (dist < el.radius + 20) {
-                playerCount--; // Perte d'une unité
-                elements.splice(i, 1); // L'ennemi s'autodétruit
+        // Collision : PORTE
+        if (el.type === 'gate' && playerY < el.y + el.h && playerY > el.y) {
+            if (Math.abs(playerX - (el.x + el.w / 2)) < el.w / 2) {
+                playerCount += el.val;
+                elements.splice(i, 1);
                 continue;
             }
         }
 
-        // 3. Collision avec OBSTACLE (Game Over)
-        if (el.type === 'obstacle' && playerPos.x > el.x && playerPos.x < el.x + el.w && playerPos.y > el.y && playerPos.y < el.y + el.h) {
+        // Collision : OBSTACLE (Mortel !)
+        if (el.type === 'obstacle' && playerX > el.x && playerX < el.x + el.w && playerY > el.y && playerY < el.y + el.h) {
             gameOver = true;
-            continue;
         }
 
-        // 4. Collision avec SUPER BONUS (Gatling)
-        if (el.type === 'superBonus') {
-            let dist = Math.hypot(playerPos.x - el.x, playerPos.y - el.y);
-            if (dist < el.radius + 20) {
-                superBonusActive = true;
-                superBonusTimer = SUPER_BONUS_DURATION;
-                elements.splice(i, 1); // Consommé
+        // Collision : ENNEMI
+        if (el.type === 'enemy') {
+            if (Math.hypot(playerX - el.x, playerY - el.y) < el.r + 15) {
+                playerCount--;
+                elements.splice(i, 1);
+                if (playerCount <= 0) gameOver = true;
                 continue;
             }
         }
 
-        // Nettoyage si sorti de l'écran par le bas
-        if (el.y > height + 200) {
-            elements.splice(i, 1);
-            // Si on a nettoyé beaucoup d'éléments, on génère une nouvelle vague
-            if (elements.length < 5) {
-                currentLevel++;
-                spawnWave(-height, currentLevel);
-            }
-        }
+        // Nettoyage hors écran
+        if (el.y > height + 100) elements.splice(i, 1);
     }
 
-    draw();
-    requestAnimationFrame(update);
+    // Mettre à jour l'IHM
+    unitCountEl.textContent = playerCount;
 }
 
-// --- RENDU ---
-function draw() {
+function render() {
     ctx.clearRect(0, 0, width, height);
 
-    // Ligne centrale de séparation des 2 voies
+    // Ligne médiane (2 voies)
     ctx.strokeStyle = '#333';
-    ctx.setLineDash([10, 10]);
+    ctx.setLineDash([8, 8]);
     ctx.beginPath();
     ctx.moveTo(width / 2, 0);
     ctx.lineTo(width / 2, height);
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Dessin des Éléments (Portes, Obstacles, Ennemis, Bonus)
+    // Dessin des éléments
     elements.forEach(el => {
-        if (el.type === 'gate') {
-            const isBonus = el.type === 'add';
-            ctx.fillStyle = isBonus ? 'rgba(0, 230, 118, 0.3)' : 'rgba(211, 47, 47, 0.3)';
+        if (el.type === 'bonus') {
+            ctx.fillStyle = '#FFD700';
+            ctx.beginPath();
+            ctx.arc(el.x, el.y, el.r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#000';
+            ctx.font = 'bold 11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("GATL", el.x, el.y + 4);
+        } 
+        else if (el.type === 'gate') {
+            ctx.fillStyle = 'rgba(0, 230, 118, 0.25)';
             ctx.fillRect(el.x, el.y, el.w, el.h);
-            ctx.strokeStyle = isBonus ? '#00E676' : '#D32F2F';
-            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#00E676';
             ctx.strokeRect(el.x, el.y, el.w, el.h);
-
+            ctx.fillStyle = '#FFF';
+            ctx.font = 'bold 16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(`+${el.val} Unités`, el.x + el.w / 2, el.y + 25);
+        }
+        else if (el.type === 'obstacle') {
+            ctx.fillStyle = '#D32F2F';
+            ctx.fillRect(el.x, el.y, el.w, el.h);
             ctx.fillStyle = '#FFF';
             ctx.font = 'bold 18px sans-serif';
             ctx.textAlign = 'center';
-            const prefix = isBonus ? '+' : '-';
-            ctx.fillText(`${prefix}${el.value} Unités`, el.x + el.w / 2, el.y + 26);
-        } 
-        else if (el.type === 'obstacle') {
-            ctx.fillStyle = '#C62828';
-            ctx.fillRect(el.x, el.y, el.w, el.h);
-            ctx.strokeStyle = '#8E0000';
-            ctx.lineWidth = 4;
-            ctx.strokeRect(el.x, el.y, el.w, el.h);
-
-            ctx.fillStyle = '#FFF';
-            ctx.font = 'bold 20px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText(el.hp, el.x + el.w / 2, el.y + el.h / 2 + 7);
+            ctx.fillText(el.hp, el.x + el.w / 2, el.y + el.h / 2 + 6);
         }
         else if (el.type === 'enemy') {
-            ctx.beginPath();
-            ctx.arc(el.x, el.y, el.radius, 0, Math.PI * 2);
             ctx.fillStyle = '#FF1744';
-            ctx.fill();
-            ctx.strokeStyle = '#B71C1C';
-            ctx.lineWidth = 1;
-            ctx.stroke();
-            ctx.closePath();
-        }
-        else if (el.type === 'superBonus') {
             ctx.beginPath();
-            ctx.arc(el.x, el.y, el.radius, 0, Math.PI * 2);
-            ctx.fillStyle = el.color;
+            ctx.arc(el.x, el.y, el.r, 0, Math.PI * 2);
             ctx.fill();
-            ctx.strokeStyle = '#FFF';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-            ctx.closePath();
-            
-            ctx.fillStyle = '#000';
-            ctx.font = 'bold 14px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText("SUPER", el.x, el.y + 5);
         }
     });
 
-    // Dessin des Balles
+    // Dessin des balles
+    ctx.fillStyle = superBonusTimer > 0 ? '#FFD700' : '#00E5FF';
     bullets.forEach(b => {
         ctx.beginPath();
-        ctx.arc(b.x, b.y, b.color === '#FFD700' ? 4 : 3, 0, Math.PI * 2);
-        ctx.fillStyle = b.color;
+        ctx.arc(b.x, b.y, 3, 0, Math.PI * 2);
         ctx.fill();
-        ctx.closePath();
     });
 
-    // Dessin du Joueur (Représenté par son groupe d'unités)
-    ctx.fillStyle = superBonusActive ? '#FFD700' : '#29B6F6'; // Doré si Gatling active
+    // Dessin du joueur
+    ctx.fillStyle = superBonusTimer > 0 ? '#FFD700' : '#29B6F6';
     ctx.beginPath();
-    ctx.arc(playerPos.x, playerPos.y, 18 + Math.min(20, playerCount / 2), 0, Math.PI * 2); // Taille augmente avec playerCount
+    ctx.arc(playerX, playerY, 16, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = '#FFF';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.closePath();
-
-    // Effet visuel si Gatling active
-    if (superBonusActive) {
-        ctx.strokeStyle = `rgba(255, 215, 0, ${Math.random()})`;
-        ctx.lineWidth = 4;
-        ctx.strokeRect(0, 0, width, height);
-    }
 }
 
-// Relancer le jeu après un Game Over
-canvas.addEventListener('click', () => {
-    if (gameOver) {
-        document.location.reload();
-    }
-});
+function renderGameOver() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = '#FFF';
+    ctx.font = 'bold 30px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText("GAME OVER", width / 2, height / 2 - 20);
+    ctx.font = '16px sans-serif';
+    ctx.fillText("Clique ou touche l'écran pour rejouer", width / 2, height / 2 + 20);
+}
 
-requestAnimationFrame(update);
+// Lancement
+requestAnimationFrame(loop);
 </script>
 </body>
 </html>
